@@ -55,6 +55,21 @@ export interface GenerateResult {
   output_dir: string | null;
 }
 
+export interface ManifestRequest {
+  recommend_result: RecommendResult;
+  mode_override?: string | null;
+  namespace?: string;
+  gateway_name?: string;
+  image?: string | null;
+  max_model_len?: number | null;
+}
+
+export interface ManifestResult {
+  yaml: string;
+  mode: string;
+  resource_count: string;
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
@@ -79,3 +94,6 @@ export const checkSupport = (model: string, system: string): Promise<SupportResu
 
 export const generate = (model: string, gpus: number, system: string): Promise<GenerateResult> =>
   post("/generate", { model, gpus, system });
+
+export const fetchManifest = (req: ManifestRequest): Promise<ManifestResult> =>
+  post("/manifest", req);

@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, type CSSProperties } from "react";
 import {
   fetchSystems,
   recommend,
-  checkSupport,
+  fetchManifest,
   type SystemInfo,
   type RecommendResult,
+  type ManifestResult,
 } from "./api";
 
 // ── Design tokens ──
@@ -393,6 +394,359 @@ function CLIPreview({ choices }: { choices: Record<string, string | null> }) {
   );
 }
 
+// ── Deploy Panel ──
+
+function ModeToggle({
+  mode,
+  hasAgg,
+  hasDisagg,
+  onChange,
+}: {
+  mode: string;
+  hasAgg: boolean;
+  hasDisagg: boolean;
+  onChange: (m: string) => void;
+}) {
+  const opts = [
+    { value: "agg", label: "Aggregated", enabled: hasAgg },
+    { value: "disagg", label: "Disaggregated (P/D)", enabled: hasDisagg },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {opts.map((o) => {
+        const active = mode === o.value || (!mode && o.value === "agg");
+        return (
+          <button
+            key={o.value}
+            disabled={!o.enabled}
+            onClick={() => onChange(o.value)}
+            style={{
+              flex: 1,
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid ${active ? T.teal : T.border}`,
+              background: active ? T.tealSoft : "transparent",
+              color: !o.enabled ? T.textDim : active ? T.teal : T.text,
+              fontSize: 12,
+              fontFamily: T.mono,
+              fontWeight: active ? 600 : 400,
+              cursor: o.enabled ? "pointer" : "not-allowed",
+              opacity: o.enabled ? 1 : 0.4,
+              transition: "all 0.15s",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  mono,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label
+        style={{
+          fontSize: 10,
+          color: T.textMuted,
+          textTransform: "uppercase",
+          letterSpacing: 1,
+          fontFamily: T.mono,
+        }}
+      >
+        {label}
+      </label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{
+          padding: "7px 10px",
+          borderRadius: 6,
+          border: `1px solid ${T.border}`,
+          background: T.surface,
+          color: T.text,
+          fontSize: 12,
+          fontFamily: mono ? T.mono : T.sans,
+          outline: "none",
+        }}
+      />
+    </div>
+  );
+}
+
+function DeployPanel({ result }: { result: RecommendResult }) {
+  const engineMode = result.chosen_mode.includes("disagg") ? "disagg" : "agg";
+  const hasAgg = result.agg_configs.length > 0;
+  const hasDisagg = result.disagg_configs.length > 0;
+
+  const [mode, setMode] = useState(engineMode);
+  const [namespace, setNamespace] = useState("llm-d");
+  const [gatewayName, setGatewayName] = useState("inference-gateway");
+  const [imageOverride, setImageOverride] = useState("");
+  const [maxModelLen, setMaxModelLen] = useState("");
+  const [manifest, setManifest] = useState<ManifestResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleGenerate() {
+    setLoading(true);
+    setError(null);
+    setManifest(null);
+    try {
+      const res = await fetchManifest({
+        recommend_result: result,
+        mode_override: mode !== engineMode ? mode : null,
+        namespace,
+        gateway_name: gatewayName,
+        image: imageOverride || null,
+        max_model_len: maxModelLen ? parseInt(maxModelLen, 10) : null,
+      });
+      setManifest(res);
+    } catch (e: any) {
+      setError(e.message || "Manifest generation failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleCopy() {
+    if (!manifest) return;
+    navigator.clipboard.writeText(manifest.yaml);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const isDisagg = mode === "disagg";
+
+  return (
+    <div
+      style={{
+        background: T.card,
+        border: `1px solid ${T.border}`,
+        borderRadius: 10,
+        overflow: "hidden",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: `1px solid ${T.border}`,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.white, fontFamily: T.sans }}>
+            Deploy to llm-d
+          </div>
+          <div style={{ fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+            Generate Kubernetes manifests for your cluster
+          </div>
+        </div>
+        <div
+          style={{
+            padding: "3px 10px",
+            borderRadius: 4,
+            fontSize: 10,
+            fontWeight: 700,
+            fontFamily: T.mono,
+            textTransform: "uppercase",
+            letterSpacing: 0.5,
+            background: isDisagg ? "rgba(168,85,247,0.15)" : T.tealSoft,
+            color: isDisagg ? T.purple : T.teal,
+            border: `1px solid ${isDisagg ? T.purple + "44" : T.teal + "44"}`,
+          }}
+        >
+          {isDisagg ? "P/D Disaggregated" : "Aggregated"}
+        </div>
+      </div>
+
+      {/* Config form */}
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Mode selector */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label
+            style={{
+              fontSize: 10,
+              color: T.textMuted,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              fontFamily: T.mono,
+            }}
+          >
+            Serving Mode
+            {mode !== engineMode && (
+              <span style={{ color: T.orange, marginLeft: 6, textTransform: "none", letterSpacing: 0 }}>
+                (overriding engine recommendation)
+              </span>
+            )}
+          </label>
+          <ModeToggle mode={mode} hasAgg={hasAgg} hasDisagg={hasDisagg} onChange={setMode} />
+          <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+            {isDisagg
+              ? "Separate prefill and decode workers with NIXL KV-cache transfer. Best for large models and long prompts."
+              : "Single worker pool handles both prefill and decode. Simpler setup, good for most workloads."}
+          </div>
+        </div>
+
+        {/* Namespace + Gateway */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <InputField
+            label="Namespace"
+            value={namespace}
+            onChange={setNamespace}
+            placeholder="llm-d"
+            mono
+          />
+          <InputField
+            label="Gateway Name"
+            value={gatewayName}
+            onChange={setGatewayName}
+            placeholder="inference-gateway"
+            mono
+          />
+        </div>
+
+        {/* Advanced: image + max-model-len */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <InputField
+            label="vLLM Image (optional)"
+            value={imageOverride}
+            onChange={setImageOverride}
+            placeholder="ghcr.io/llm-d/llm-d-cuda:v0.5.1"
+            mono
+          />
+          <InputField
+            label="Max Model Length (optional)"
+            value={maxModelLen}
+            onChange={setMaxModelLen}
+            placeholder="e.g. 32000"
+            mono
+          />
+        </div>
+
+        {/* Generate button */}
+        <button
+          onClick={handleGenerate}
+          disabled={loading}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 6,
+            border: "none",
+            background: T.teal,
+            color: "#000",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: T.sans,
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading ? 0.7 : 1,
+            transition: "opacity 0.15s",
+          }}
+        >
+          {loading ? "Generating..." : "Generate llm-d Manifests"}
+        </button>
+
+        {error && (
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: 6,
+              background: "rgba(239,68,68,0.1)",
+              border: `1px solid ${T.accent}44`,
+              color: T.accent,
+              fontSize: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* YAML output */}
+      {manifest && (
+        <div style={{ borderTop: `1px solid ${T.border}` }}>
+          <div
+            style={{
+              padding: "10px 16px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderBottom: `1px solid ${T.border}`,
+            }}
+          >
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: T.text, fontFamily: T.sans }}>
+                Generated Manifests
+              </span>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: T.textMuted,
+                  fontFamily: T.mono,
+                  background: T.surface,
+                  padding: "2px 8px",
+                  borderRadius: 4,
+                }}
+              >
+                {manifest.resource_count} resources
+              </span>
+            </div>
+            <button
+              onClick={handleCopy}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 4,
+                border: `1px solid ${copied ? T.green + "66" : T.border}`,
+                background: copied ? "rgba(34,197,94,0.1)" : T.surface,
+                color: copied ? T.green : T.text,
+                fontSize: 11,
+                fontFamily: T.mono,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              {copied ? "Copied" : "Copy YAML"}
+            </button>
+          </div>
+          <pre
+            style={{
+              padding: 16,
+              margin: 0,
+              fontFamily: T.mono,
+              fontSize: 11,
+              lineHeight: 1.6,
+              color: T.teal,
+              background: "#0a0c10",
+              overflowX: "auto",
+              maxHeight: 480,
+              overflowY: "auto",
+            }}
+          >
+            {manifest.yaml}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──
 
 export default function App() {
@@ -748,43 +1102,8 @@ export default function App() {
               <ConfigTable title="Aggregated Configs" configs={result.agg_configs} />
               <ConfigTable title="Disaggregated Configs" configs={result.disagg_configs} />
 
-              {/* vLLM serve command */}
-              <div
-                style={{
-                  background: T.card,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: 16,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: T.text,
-                    marginBottom: 8,
-                    fontFamily: T.sans,
-                  }}
-                >
-                  vLLM Serve Command
-                </div>
-                <pre
-                  style={{
-                    fontFamily: T.mono,
-                    fontSize: 11,
-                    color: T.teal,
-                    lineHeight: 1.7,
-                    background: "#0a0c10",
-                    padding: 12,
-                    borderRadius: 6,
-                    overflowX: "auto",
-                  }}
-                >
-                  {`vllm serve ${result.model_path} \\\n  --tensor-parallel-size ${
-                    result.agg_configs[0]?.tp ?? result.disagg_configs[0]?.["(p)tp"] ?? 1
-                  }`}
-                </pre>
-              </div>
+              {/* llm-d deploy panel */}
+              <DeployPanel result={result} />
             </div>
           )}
 

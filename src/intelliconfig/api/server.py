@@ -54,6 +54,15 @@ class SupportRequest(BaseModel):
     system: str
 
 
+class ManifestRequest(BaseModel):
+    recommend_result: dict[str, Any] = Field(..., description="Full output from /api/recommend")
+    mode_override: str | None = Field(None, description="Force 'agg' or 'disagg' instead of engine's chosen_mode")
+    namespace: str = Field("llm-d", description="K8s namespace for the deployment")
+    gateway_name: str = Field("inference-gateway", description="Name of the K8s Gateway resource")
+    image: str | None = Field(None, description="Override the vLLM container image")
+    max_model_len: int | None = Field(None, description="Override vLLM --max-model-len")
+
+
 # ── Endpoints ──
 
 
@@ -110,6 +119,43 @@ def post_support(req: SupportRequest) -> dict[str, Any]:
         return asdict(result)
     except Exception as e:
         logger.exception("support failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/manifest")
+def post_manifest(req: ManifestRequest) -> dict[str, str]:
+    """Generate llm-d K8s deployment manifests from a recommend result."""
+    from intelliconfig.generator.llmd_manifest import (
+        manifest_from_recommend,
+        generate_agg_manifest,
+        generate_disagg_manifest,
+        VLLM_IMAGE,
+    )
+
+    try:
+        result = req.recommend_result
+        image = req.image or VLLM_IMAGE
+        kwargs: dict[str, Any] = {
+            "namespace": req.namespace,
+            "gateway_name": req.gateway_name,
+            "image": image,
+            "max_model_len": req.max_model_len,
+        }
+
+        if req.mode_override:
+            result = {**result, "chosen_mode": req.mode_override}
+
+        yaml_text = manifest_from_recommend(result, **kwargs)
+        mode = result.get("chosen_mode", "agg")
+        is_disagg = "disagg" in mode
+
+        return {
+            "yaml": yaml_text,
+            "mode": "disagg" if is_disagg else "agg",
+            "resource_count": str(yaml_text.count("---\n") + 1),
+        }
+    except Exception as e:
+        logger.exception("manifest generation failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
