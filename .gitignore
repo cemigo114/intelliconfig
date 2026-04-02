@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+.env
+
+# Testing / Linting
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / UI
+node_modules/
+ui/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
